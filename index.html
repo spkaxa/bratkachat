@@ -354,7 +354,7 @@
   </div>
 </div>
 
-<!-- ==================== МОДАЛКА: НАСТРОЙКИ ==================== -->
+<!-- ==================== МОДАЛКА: НАСТРОЙКИ ПРОФИЛЯ ==================== -->
 <div class="modal-overlay" id="modal-settings">
   <div class="modal">
     <h3>Настройки профиля</h3>
@@ -387,6 +387,27 @@
   </div>
 </div>
 
+<!-- ==================== МОДАЛКА: НАСТРОЙКИ ЧАТА ==================== -->
+<div class="modal-overlay" id="modal-chat-settings">
+  <div class="modal">
+    <h3>Настройки чата</h3>
+    
+    <div class="settings-section">
+      <button class="btn-secondary" id="btn-clear-history" style="width:100%; background:#ff555522; color:#ff5555; border:1px solid #ff555566;">Удалить историю чата</button>
+    </div>
+
+    <!-- Показывается только для ZywOo -->
+    <div class="settings-section hidden" id="zywoo-reset-section">
+      <button class="btn-secondary" id="btn-reset-zywoo" style="width:100%; background:#ffaa0022; color:#ffaa00; border:1px solid #ffaa0066;">Удалить историю и сбросить память</button>
+      <div style="font-size:0.75rem; color:#888; margin-top:8px;">Это очистит историю и ZywOo забудет всё, о чем вы говорили.</div>
+    </div>
+
+    <div class="btn-row">
+      <button class="btn-secondary" onclick="closeModal('modal-chat-settings')">Закрыть</button>
+    </div>
+  </div>
+</div>
+
 <!-- ==================== МОДАЛКА: НАСТРОЙКИ ГРУППЫ ==================== -->
 <div class="modal-overlay" id="modal-group-settings">
   <div class="modal">
@@ -404,17 +425,6 @@
   </div>
 </div>
 
-<!-- ==================== МОДАЛКА: ПРОСМОТР ПРОФИЛЯ ==================== -->
-<div class="modal-overlay" id="modal-view-profile">
-  <div class="modal" style="text-align:center;">
-    <img class="avatar-preview" id="view-avatar" src="" alt="" style="margin:0 auto 12px;">
-    <h3 id="view-name" style="margin-bottom:4px;"></h3>
-    <div id="view-username" style="color:#888; font-size:0.85rem; margin-bottom:8px;"></div>
-    <div id="view-bio" style="color:#aaa; font-size:0.9rem; margin-bottom:16px;"></div>
-    <button class="btn-secondary" onclick="closeModal('modal-view-profile')" style="padding:10px 30px;">Закрыть</button>
-  </div>
-</div>
-
 <!-- ==================== СКРИПТЫ ==================== -->
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
@@ -424,10 +434,9 @@
   } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js";
   import {
     getDatabase, ref, set, get, push, update, onValue, onChildAdded,
-    serverTimestamp, query, orderByChild, limitToLast, off
+    serverTimestamp, query, orderByChild, limitToLast, off, remove
   } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-database.js";
 
-  // --- ТВОЙ КОНФИГ FIREBASE ---
   const firebaseConfig = {
     apiKey: "AIzaSyCRD16DPzyTGibZCmTnN-54lBhUSAjsxZo",
     authDomain: "bratkachat.firebaseapp.com",
@@ -446,6 +455,7 @@
   let currentUser = null;
   let currentProfile = null;
   let currentChatId = null;
+  let currentChatData = null; // Храним данные текущего чата
   let chatsUnsubscribe = null;
   let messagesUnsubscribe = null;
   let msgCountUnsubscribe = null;
@@ -460,7 +470,6 @@
   let voiceRoomRef = null;
   let voiceSignalingUnsub = null;
 
-  // Защита от спама ZywOo
   let isZywOoThinking = false;
 
   // ==================== ЭКРАН ВХОДА ====================
@@ -478,9 +487,7 @@
     authTitle.textContent = isRegisterMode ? 'Регистрация' : 'Вход';
     authSubmit.textContent = isRegisterMode ? 'Создать аккаунт' : 'Войти';
     authUsername.classList.toggle('hidden', !isRegisterMode);
-    authToggle.innerHTML = isRegisterMode
-      ? 'Уже есть аккаунт? <span>Войти</span>'
-      : 'Нет аккаунта? <span>Зарегистрироваться</span>';
+    authToggle.innerHTML = isRegisterMode ? 'Уже есть аккаунт? <span>Войти</span>' : 'Нет аккаунта? <span>Зарегистрироваться</span>';
     authError.textContent = '';
   });
 
@@ -500,8 +507,7 @@
         const cred = await createUserWithEmailAndPassword(auth, email, password);
         const uid = cred.user.uid;
         await set(ref(db, `users/${uid}`), {
-          uid, email, username,
-          displayName: username,
+          uid, email, username, displayName: username,
           avatar: '', bio: '', color: '#00ff88',
           createdAt: serverTimestamp()
         });
@@ -514,8 +520,7 @@
         'auth/invalid-email': 'Некорректный email',
         'auth/weak-password': 'Слишком слабый пароль',
         'auth/user-not-found': 'Пользователь не найден',
-        'auth/wrong-password': 'Неверный пароль',
-        'auth/too-many-requests': 'Слишком много попыток. Подождите.'
+        'auth/wrong-password': 'Неверный пароль'
       };
       authError.textContent = msgs[e.code] || e.message;
     } finally {
@@ -533,10 +538,7 @@
         currentProfile = snap.val();
       } else {
         const uname = user.email.split('@')[0];
-        currentProfile = {
-          uid: user.uid, email: user.email, username: uname,
-          displayName: uname, avatar: '', bio: '', color: '#00ff88'
-        };
+        currentProfile = { uid: user.uid, email: user.email, username: uname, displayName: uname, avatar: '', bio: '', color: '#00ff88' };
         await set(profileRef, { ...currentProfile, createdAt: serverTimestamp() });
       }
       if (currentProfile.color) document.body.style.setProperty('--accent', currentProfile.color);
@@ -545,13 +547,12 @@
       updateMiniProfile();
       initChats();
     } else {
-      currentUser = null;
-      currentProfile = null;
+      currentUser = null; currentProfile = null;
       document.getElementById('auth-screen').style.display = 'flex';
       document.getElementById('app').classList.remove('visible');
       cleanupVoice();
-      if (chatsUnsubscribe) { chatsUnsubscribe(); chatsUnsubscribe = null; }
-      if (messagesUnsubscribe) { messagesUnsubscribe(); messagesUnsubscribe = null; }
+      if (chatsUnsubscribe) chatsUnsubscribe();
+      if (messagesUnsubscribe) messagesUnsubscribe();
     }
   });
 
@@ -572,8 +573,7 @@
     ctx.fillRect(0, 0, 80, 80);
     ctx.fillStyle = `hsl(${hue}, 80%, 70%)`;
     ctx.font = 'bold 40px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(seed.charAt(0).toUpperCase(), 40, 44);
     return canvas.toDataURL();
   }
@@ -584,7 +584,7 @@
     const defaults = [
       { id: 'general', name: 'Общий чат', type: 'general', icon: '🌐' },
       { id: 'voice', name: 'Голосовой чат', type: 'voice', icon: '🎙' },
-      { id: 'zywoo', name: 'Чат с ZywOo', type: 'zywoo', icon: '🎯' }
+      { id: 'zywoo', name: 'ZywOo (ai)', type: 'zywoo', icon: '🎯' }
     ];
 
     for (const d of defaults) {
@@ -603,6 +603,9 @@
       const visible = [];
 
       for (const [id, chat] of Object.entries(all)) {
+        // Принудительно меняем имя для Зиву
+        if (id === 'zywoo') chat.name = 'ZywOo (ai)';
+        
         if (['general', 'voice', 'zywoo'].includes(id) || (chat.members && chat.members[currentUser.uid])) {
           visible.push({ id, ...chat });
         }
@@ -647,14 +650,16 @@
   // ==================== ОТКРЫТИЕ ЧАТА ====================
   function openChat(chatId, chatData) {
     currentChatId = chatId;
+    currentChatData = chatData;
+    
     document.querySelectorAll('.chat-item').forEach(el => {
       el.classList.toggle('active', el.dataset.chatId === chatId);
     });
 
     document.getElementById('chat-title').textContent = chatData.name || 'Чат';
 
-    if (messagesUnsubscribe) { messagesUnsubscribe(); messagesUnsubscribe = null; }
-    if (msgCountUnsubscribe) { msgCountUnsubscribe(); msgCountUnsubscribe = null; }
+    if (messagesUnsubscribe) messagesUnsubscribe();
+    if (msgCountUnsubscribe) msgCountUnsubscribe();
 
     const isVoice = chatData.type === 'voice';
     const isZywoo = chatData.type === 'zywoo';
@@ -663,7 +668,6 @@
     document.getElementById('msg-input-area').classList.toggle('hidden', isVoice);
     document.getElementById('voice-panel').classList.toggle('hidden', !isVoice);
 
-    // ФИКС: Включаем/выключаем поле ввода
     if (isVoice) {
       document.getElementById('msg-input').disabled = true;
       document.getElementById('btn-send').disabled = true;
@@ -684,19 +688,51 @@
       });
     }
 
+    // Кнопки в заголовке
     const actions = document.getElementById('header-actions');
     actions.innerHTML = '';
 
+    // Кнопка настроек теперь для ВСЕХ чатов
+    const btnSettings = document.createElement('button');
+    btnSettings.textContent = '⚙ Настройки';
+    btnSettings.onclick = () => openChatSettings(chatId, chatData);
+    actions.appendChild(btnSettings);
+
+    // Для групп добавляем кнопку настроек группы
     if (chatData.type === 'group' || chatData.type === 'dm') {
-      const btn = document.createElement('button');
-      btn.textContent = '⚙ Настройки';
-      btn.onclick = () => openGroupSettings(chatId, chatData);
-      actions.appendChild(btn);
+      const btnGroup = document.createElement('button');
+      btnGroup.textContent = '👥 Группа';
+      btnGroup.onclick = () => openGroupSettings(chatId, chatData);
+      actions.appendChild(btnGroup);
     }
 
-    if (isZywoo) {
-      checkZywooGreeting(chatId);
+    if (isZywoo) checkZywooGreeting(chatId);
+  }
+
+  // ==================== НАСТРОЙКИ ЧАТА ====================
+  function openChatSettings(chatId, chatData) {
+    document.getElementById('btn-clear-history').onclick = async () => {
+      if (confirm('Вы уверены, что хотите удалить ВСЮ историю сообщений в этом чате?')) {
+        await remove(ref(db, `chats/${chatId}/messages`));
+        closeModal('modal-chat-settings');
+      }
+    };
+
+    const zywooSection = document.getElementById('zywoo-reset-section');
+    if (chatData.type === 'zywoo') {
+      zywooSection.classList.remove('hidden');
+      document.getElementById('btn-reset-zywoo').onclick = async () => {
+        if (confirm('Удалить историю и сбросить память ZywOo?')) {
+          await remove(ref(db, `chats/${chatId}/messages`));
+          checkZywooGreeting(chatId); // Отправит новое приветствие
+          closeModal('modal-chat-settings');
+        }
+      };
+    } else {
+      zywooSection.classList.add('hidden');
     }
+
+    openModal('modal-chat-settings');
   }
 
   // ==================== СООБЩЕНИЯ ====================
@@ -749,47 +785,35 @@
     const text = input.value.trim();
     if (!text) return;
 
-    // --- ЗАЩИТА ZYWOO ОТ СПАМА ---
     if (currentChatId === 'zywoo') {
-      if (text.length < 3) {
-        alert('ZywOo не понимает сообщения короче 3 символов.');
-        return;
-      }
-      if (isZywOoThinking) {
-        alert('Подожди, ZywOo еще печатает...');
-        return;
-      }
+      if (text.length < 3) { alert('ZywOo не понимает сообщения короче 3 символов.'); return; }
+      if (isZywOoThinking) { alert('Подожди, ZywOo еще печатает...'); return; }
       isZywOoThinking = true;
-      input.disabled = true; // Блокируем ввод, пока ждем ответ
+      input.disabled = true;
       document.getElementById('btn-send').disabled = true;
     }
-    // -----------------------------
 
     input.value = '';
-    const chatRef = ref(db, `chats/${currentChatId}/messages`);
-    const newRef = push(chatRef);
+    const newRef = push(ref(db, `chats/${currentChatId}/messages`));
     await set(newRef, {
       uid: currentUser.uid,
       username: currentProfile.displayName || currentProfile.username || 'User',
       avatar: currentProfile.avatar || '',
-      text,
-      timestamp: Date.now()
+      text, timestamp: Date.now()
     });
 
-    if (currentChatId === 'zywoo') {
-      replyZywoo(text);
-    }
+    if (currentChatId === 'zywoo') replyZywoo(text);
   }
 
-  // ==================== ЧАТ С ZYWOO (ИИ) ====================
+  // ==================== ZYWOO AI ====================
   async function checkZywooGreeting(chatId) {
     const snap = await get(ref(db, `chats/${chatId}/messages`));
     if (!snap.exists() || Object.keys(snap.val()).length === 0) {
       const newRef = push(ref(db, `chats/${chatId}/messages`));
       await set(newRef, {
-        uid: 'zywoo_bot', username: 'ZywOo',
+        uid: 'zywoo_bot', username: 'ZywOo (ai)',
         avatar: 'https://i.imgur.com/8Q6Z4kL.png',
-        text: 'Привет! Я ZywOo. Спрашивай что угодно по CS или просто поболтаем.',
+        text: 'Привет! Я ZywOo (ai). Спрашивай что угодно по CS или просто поболтаем.',
         timestamp: Date.now()
       });
     }
@@ -799,11 +823,26 @@
     if (!currentChatId || currentChatId !== 'zywoo') return;
     
     try {
-      // Запрос к твоему Cloudflare Worker
+      // Получаем историю последних 10 сообщений для памяти
+      const snap = await get(ref(db, `chats/zywoo/messages`));
+      let historyMessages = [];
+      if (snap.exists()) {
+        const msgs = [];
+        snap.forEach(child => msgs.push(child.val()));
+        msgs.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+        
+        // Форматируем для OpenRouter
+        historyMessages = msgs.slice(-10).map(m => ({
+          role: m.uid === 'zywoo_bot' ? 'assistant' : 'user',
+          content: m.text
+        }));
+      }
+
+      // Отправляем в Cloudflare Worker
       const res = await fetch('https://zywoo.nestlecreator.workers.dev', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userText: userText })
+        body: JSON.stringify({ messages: historyMessages })
       });
 
       if (!res.ok) throw new Error('Ошибка сервера: ' + res.status);
@@ -812,7 +851,7 @@
       if (data.reply) {
         const newRef = push(ref(db, `chats/zywoo/messages`));
         await set(newRef, {
-          uid: 'zywoo_bot', username: 'ZywOo',
+          uid: 'zywoo_bot', username: 'ZywOo (ai)',
           avatar: 'https://i.imgur.com/8Q6Z4kL.png',
           text: data.reply,
           timestamp: Date.now()
@@ -822,12 +861,11 @@
       console.error('Ошибка ZywOo:', e);
       const newRef = push(ref(db, `chats/zywoo/messages`));
       await set(newRef, {
-        uid: 'zywoo_bot', username: 'ZywOo (Ошибка)',
+        uid: 'zywoo_bot', username: 'ZywOo (ai)',
         avatar: '', text: 'Ошибка связи с ИИ: ' + e.message,
         timestamp: Date.now()
       });
     } finally {
-      // Разблокируем ввод в любом случае (успех или ошибка)
       isZywOoThinking = false;
       if (currentChatId === 'zywoo') {
         document.getElementById('msg-input').disabled = false;
@@ -888,7 +926,7 @@
     closeModal('modal-add-chat');
   });
 
-  // ==================== НАСТРОЙКИ ====================
+  // ==================== НАСТРОЙКИ ПРОФИЛЯ ====================
   document.getElementById('profile-mini').addEventListener('click', () => {
     document.getElementById('settings-username').value = currentProfile.displayName || currentProfile.username || '';
     document.getElementById('settings-bio').value = currentProfile.bio || '';
@@ -952,7 +990,6 @@
 
   // ==================== НАСТРОЙКИ ГРУППЫ ====================
   let currentGroupSettingsId = null;
-
   function openGroupSettings(chatId, chatData) {
     currentGroupSettingsId = chatId;
     document.getElementById('group-settings-name').value = chatData.name || '';
@@ -1050,9 +1087,7 @@
         };
 
         peerConnection.ontrack = () => { status.textContent = 'Собеседник подключён'; };
-      } catch (err) {
-        status.textContent = 'Ошибка: ' + err.message;
-      }
+      } catch (err) { status.textContent = 'Ошибка: ' + err.message; }
     };
 
     btnLeave.onclick = () => {
@@ -1102,18 +1137,13 @@
         btnShare.style.display = 'none';
         btnStopShare.style.display = '';
         screenStream.getVideoTracks()[0].onended = () => stopScreenShare();
-      } catch (err) {
-        status.textContent = 'Не удалось начать демонстрацию: ' + err.message;
-      }
+      } catch (err) { status.textContent = 'Не удалось начать демонстрацию: ' + err.message; }
     };
 
     btnStopShare.onclick = () => stopScreenShare();
 
     function stopScreenShare() {
-      if (screenStream) {
-        screenStream.getTracks().forEach(t => t.stop());
-        screenStream = null;
-      }
+      if (screenStream) { screenStream.getTracks().forEach(t => t.stop()); screenStream = null; }
       localVideo.srcObject = null;
       localVideo.style.display = 'none';
       btnShare.style.display = '';
