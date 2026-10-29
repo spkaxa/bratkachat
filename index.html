@@ -701,6 +701,14 @@
     document.getElementById('messages').classList.toggle('hidden', isVoice);
     document.getElementById('msg-input-area').classList.toggle('hidden', isVoice);
     document.getElementById('voice-panel').classList.toggle('hidden', !isVoice);
+        // Включаем или выключаем поле ввода в зависимости от типа чата
+    if (isVoice) {
+      document.getElementById('msg-input').disabled = true;
+      document.getElementById('btn-send').disabled = true;
+    } else {
+      document.getElementById('msg-input').disabled = false;
+      document.getElementById('btn-send').disabled = false;
+    }
 
     if (isVoice) {
       // Обновляем счётчик для голосового (не сообщения, а участники)
