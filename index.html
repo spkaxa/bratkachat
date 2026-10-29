@@ -246,10 +246,19 @@
       border: 2px solid var(--accent); margin-bottom: 10px; background: #0a0f0a;
     }
 
-    /* --- Утилиты --- */
+    /* --- Утилиты и Анимации --- */
     .hidden { display: none !important; }
     .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; color: #555; gap: 8px; }
     .empty-state .icon { font-size: 3rem; opacity: 0.3; }
+
+    /* Индикатор печати */
+    .typing-indicator {
+      display: flex; gap: 4px; padding: 12px 16px; background: #0f1a0f; border-radius: 12px; width: fit-content; align-items: center;
+    }
+    .typing-dot { width: 6px; height: 6px; background: var(--accent); border-radius: 50%; animation: bounce 1.4s infinite ease-in-out both; }
+    .typing-dot:nth-child(1) { animation-delay: -0.32s; }
+    .typing-dot:nth-child(2) { animation-delay: -0.16s; }
+    @keyframes bounce { 0%, 80%, 100% { transform: scale(0); } 40% { transform: scale(1); } }
 
     @media (max-width: 700px) {
       #sidebar { width: 240px; min-width: 240px; }
@@ -455,7 +464,7 @@
   let currentUser = null;
   let currentProfile = null;
   let currentChatId = null;
-  let currentChatData = null; // Храним данные текущего чата
+  let currentChatData = null;
   let chatsUnsubscribe = null;
   let messagesUnsubscribe = null;
   let msgCountUnsubscribe = null;
@@ -603,7 +612,6 @@
       const visible = [];
 
       for (const [id, chat] of Object.entries(all)) {
-        // Принудительно меняем имя для Зиву
         if (id === 'zywoo') chat.name = 'ZywOo (ai)';
         
         if (['general', 'voice', 'zywoo'].includes(id) || (chat.members && chat.members[currentUser.uid])) {
@@ -688,17 +696,14 @@
       });
     }
 
-    // Кнопки в заголовке
     const actions = document.getElementById('header-actions');
     actions.innerHTML = '';
 
-    // Кнопка настроек теперь для ВСЕХ чатов
     const btnSettings = document.createElement('button');
     btnSettings.textContent = '⚙ Настройки';
     btnSettings.onclick = () => openChatSettings(chatId, chatData);
     actions.appendChild(btnSettings);
 
-    // Для групп добавляем кнопку настроек группы
     if (chatData.type === 'group' || chatData.type === 'dm') {
       const btnGroup = document.createElement('button');
       btnGroup.textContent = '👥 Группа';
@@ -724,7 +729,7 @@
       document.getElementById('btn-reset-zywoo').onclick = async () => {
         if (confirm('Удалить историю и сбросить память ZywOo?')) {
           await remove(ref(db, `chats/${chatId}/messages`));
-          checkZywooGreeting(chatId); // Отправит новое приветствие
+          checkZywooGreeting(chatId);
           closeModal('modal-chat-settings');
         }
       };
@@ -742,28 +747,39 @@
     const q = query(ref(db, `chats/${chatId}/messages`), orderByChild('timestamp'), limitToLast(100));
 
     messagesUnsubscribe = onValue(q, (snap) => {
+      // Не очищаем контейнер полностью, чтобы не удалить индикатор печати!
+      // Вместо этого удаляем только старые сообщения
+      const typing = document.getElementById('typing-indicator');
       msgContainer.innerHTML = '';
+      if (typing) msgContainer.appendChild(typing);
+
       if (!snap.exists()) {
-        msgContainer.innerHTML = '<div class="empty-state"><div class="icon">💬</div><div>Пока нет сообщений</div></div>';
+        if (!typing) msgContainer.innerHTML = '<div class="empty-state"><div class="icon">💬</div><div>Пока нет сообщений</div></div>';
         return;
       }
+      
       const msgs = [];
       snap.forEach(child => { msgs.push({ id: child.key, ...child.val() }); });
       msgs.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
 
-      for (const m of msgs) renderMessage(m, msgContainer);
+      // Вставляем сообщения ПЕРЕД индикатором печати
+      for (const m of msgs) {
+        const msgEl = document.createElement('div');
+        renderMessage(m, msgEl);
+        msgContainer.insertBefore(msgEl, typing);
+      }
+      
       msgContainer.scrollTop = msgContainer.scrollHeight;
     });
   }
 
   function renderMessage(m, container) {
     const isOwn = m.uid === currentUser.uid;
-    const el = document.createElement('div');
-    el.className = 'msg' + (isOwn ? ' own' : '');
+    container.className = 'msg' + (isOwn ? ' own' : '');
     const avatar = m.avatar || generateAvatar(m.username || 'U');
     const time = m.timestamp ? new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
 
-    el.innerHTML = `
+    container.innerHTML = `
       <img class="msg-avatar" src="${esc(avatar)}" alt="" onerror="this.src='${generateAvatar(m.username || 'U')}'">
       <div class="msg-body">
         <div class="msg-author">${esc(m.username || 'User')}</div>
@@ -771,7 +787,6 @@
         <div class="msg-time">${time}</div>
       </div>
     `;
-    container.appendChild(el);
   }
 
   document.getElementById('btn-send').addEventListener('click', sendMessage);
@@ -822,8 +837,25 @@
   async function replyZywoo(userText) {
     if (!currentChatId || currentChatId !== 'zywoo') return;
     
+    // Показываем индикатор "Печатает..."
+    const msgContainer = document.getElementById('messages');
+    const typingEl = document.createElement('div');
+    typingEl.className = 'msg';
+    typingEl.id = 'typing-indicator';
+    typingEl.innerHTML = `
+      <img class="msg-avatar" src="https://i.imgur.com/8Q6Z4kL.png" alt="">
+      <div class="msg-body">
+        <div class="msg-author">ZywOo (ai)</div>
+        <div class="typing-indicator">
+          <div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div>
+        </div>
+      </div>
+    `;
+    msgContainer.appendChild(typingEl);
+    msgContainer.scrollTop = msgContainer.scrollHeight;
+
     try {
-      // Получаем историю последних 10 сообщений для памяти
+      // Получаем историю
       const snap = await get(ref(db, `chats/zywoo/messages`));
       let historyMessages = [];
       if (snap.exists()) {
@@ -831,15 +863,18 @@
         snap.forEach(child => msgs.push(child.val()));
         msgs.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
         
-        // Форматируем для OpenRouter
         historyMessages = msgs.slice(-10).map(m => ({
           role: m.uid === 'zywoo_bot' ? 'assistant' : 'user',
           content: m.text
         }));
       }
 
-      // Отправляем в Cloudflare Worker
-      const res = await fetch('https://zywoo.nestlecreator.workers.dev', {
+      // Убеждаемся, что текущее сообщение в конце
+      if (historyMessages.length === 0 || historyMessages[historyMessages.length - 1].content !== userText) {
+        historyMessages.push({ role: 'user', content: userText });
+      }
+
+      const res = await fetch('https://zywoo.nestlecreator.workers.dev/', { // НЕ ЗАБУДЬ ЗАМЕНИТЬ ССЫЛКУ
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages: historyMessages })
@@ -848,6 +883,9 @@
       if (!res.ok) throw new Error('Ошибка сервера: ' + res.status);
       const data = await res.json();
       
+      // Удаляем индикатор перед добавлением ответа
+      typingEl.remove();
+
       if (data.reply) {
         const newRef = push(ref(db, `chats/zywoo/messages`));
         await set(newRef, {
@@ -858,6 +896,7 @@
         });
       }
     } catch (e) {
+      typingEl.remove();
       console.error('Ошибка ZywOo:', e);
       const newRef = push(ref(db, `chats/zywoo/messages`));
       await set(newRef, {
@@ -870,6 +909,7 @@
       if (currentChatId === 'zywoo') {
         document.getElementById('msg-input').disabled = false;
         document.getElementById('btn-send').disabled = false;
+        document.getElementById('msg-input').focus();
       }
     }
   }
