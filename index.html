@@ -161,7 +161,7 @@
     .msg .msg-text {
       background: #0f1a0f; padding: 9px 14px; border-radius: 12px;
       font-size: 0.9rem; line-height: 1.4; word-wrap: break-word;
-      border: 1px solid transparent;
+      border: 1px solid transparent; white-space: pre-wrap;
     }
     .msg.own .msg-text { background: #00ff8818; border-color: #00ff8833; }
     .msg .msg-time { font-size: 0.65rem; color: #666; margin-top: 2px; }
@@ -177,13 +177,15 @@
       color: #e0e0e0; font-size: 0.95rem; outline: none;
     }
     .msg-input-area input:focus { border-color: var(--accent); }
+    .msg-input-area input:disabled { opacity: 0.5; cursor: not-allowed; }
     .msg-input-area button {
       padding: 12px 22px; border: none; border-radius: 10px;
       background: linear-gradient(135deg, #00ff88, #00cc66);
       color: #0a0a0a; font-weight: 700; cursor: pointer;
       transition: box-shadow 0.2s;
     }
-    .msg-input-area button:hover { box-shadow: 0 0 20px rgba(0,255,136,0.35); }
+    .msg-input-area button:hover:not(:disabled) { box-shadow: 0 0 20px rgba(0,255,136,0.35); }
+    .msg-input-area button:disabled { opacity: 0.5; cursor: not-allowed; }
 
     /* --- Голосовой чат --- */
     .voice-panel { padding: 24px; display: flex; flex-direction: column; gap: 16px; }
@@ -249,7 +251,6 @@
     .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; color: #555; gap: 8px; }
     .empty-state .icon { font-size: 3rem; opacity: 0.3; }
 
-    /* Адаптив */
     @media (max-width: 700px) {
       #sidebar { width: 240px; min-width: 240px; }
     }
@@ -295,7 +296,6 @@
 
   <!-- Основная область -->
   <div id="main">
-    <!-- Заголовок чата -->
     <div class="chat-header">
       <div>
         <h3 id="chat-title">Выберите чат</h3>
@@ -304,7 +304,6 @@
       <div class="header-actions" id="header-actions"></div>
     </div>
 
-    <!-- Сообщения -->
     <div class="messages" id="messages">
       <div class="empty-state">
         <div class="icon">💬</div>
@@ -312,13 +311,11 @@
       </div>
     </div>
 
-    <!-- Поле ввода -->
     <div class="msg-input-area" id="msg-input-area">
       <input id="msg-input" type="text" placeholder="Написать сообщение..." disabled>
       <button id="btn-send" disabled>➤</button>
     </div>
 
-    <!-- Голосовая панель (скрыта по умолчанию) -->
     <div class="voice-panel hidden" id="voice-panel">
       <div class="voice-status" id="voice-status">Голосовой чат</div>
       <div class="voice-controls">
@@ -418,7 +415,7 @@
   </div>
 </div>
 
-<!-- ==================== FIREBASE ==================== -->
+<!-- ==================== СКРИПТЫ ==================== -->
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
   import {
@@ -430,7 +427,7 @@
     serverTimestamp, query, orderByChild, limitToLast, off
   } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-database.js";
 
-  // --- Конфиг Firebase ---
+  // --- ТВОЙ КОНФИГ FIREBASE ---
   const firebaseConfig = {
     apiKey: "AIzaSyCRD16DPzyTGibZCmTnN-54lBhUSAjsxZo",
     authDomain: "bratkachat.firebaseapp.com",
@@ -446,10 +443,10 @@
   const db = getDatabase(app);
 
   // ==================== ГЛОБАЛЬНОЕ СОСТОЯНИЕ ====================
-  let currentUser = null;        // Firebase user
-  let currentProfile = null;     // { uid, email, username, avatar, bio, color }
-  let currentChatId = null;      // ID активного чата
-  let chatsUnsubscribe = null;   // отписка от списка чатов
+  let currentUser = null;
+  let currentProfile = null;
+  let currentChatId = null;
+  let chatsUnsubscribe = null;
   let messagesUnsubscribe = null;
   let msgCountUnsubscribe = null;
 
@@ -462,6 +459,9 @@
   let voiceJoined = false;
   let voiceRoomRef = null;
   let voiceSignalingUnsub = null;
+
+  // Защита от спама ZywOo
+  let isZywOoThinking = false;
 
   // ==================== ЭКРАН ВХОДА ====================
   let isRegisterMode = false;
@@ -498,16 +498,11 @@
     try {
       if (isRegisterMode) {
         const cred = await createUserWithEmailAndPassword(auth, email, password);
-        // Создаём профиль в БД
         const uid = cred.user.uid;
         await set(ref(db, `users/${uid}`), {
-          uid,
-          email,
-          username,
+          uid, email, username,
           displayName: username,
-          avatar: '',
-          bio: '',
-          color: '#00ff88',
+          avatar: '', bio: '', color: '#00ff88',
           createdAt: serverTimestamp()
         });
       } else {
@@ -532,7 +527,6 @@
   onAuthStateChanged(auth, async (user) => {
     if (user) {
       currentUser = user;
-      // Загружаем/создаём профиль
       const profileRef = ref(db, `users/${user.uid}`);
       const snap = await get(profileRef);
       if (snap.exists()) {
@@ -540,24 +534,15 @@
       } else {
         const uname = user.email.split('@')[0];
         currentProfile = {
-          uid: user.uid,
-          email: user.email,
-          username: uname,
-          displayName: uname,
-          avatar: '',
-          bio: '',
-          color: '#00ff88'
+          uid: user.uid, email: user.email, username: uname,
+          displayName: uname, avatar: '', bio: '', color: '#00ff88'
         };
         await set(profileRef, { ...currentProfile, createdAt: serverTimestamp() });
       }
-      // Применяем цвет
       if (currentProfile.color) document.body.style.setProperty('--accent', currentProfile.color);
-      // Показываем приложение
       document.getElementById('auth-screen').style.display = 'none';
       document.getElementById('app').classList.add('visible');
-      // Заполняем мини-профиль
       updateMiniProfile();
-      // Подключаемся к чатам
       initChats();
     } else {
       currentUser = null;
@@ -571,8 +556,7 @@
   });
 
   function updateMiniProfile() {
-    document.getElementById('my-name-mini').textContent =
-      currentProfile.displayName || currentProfile.username || 'User';
+    document.getElementById('my-name-mini').textContent = currentProfile.displayName || currentProfile.username || 'User';
     document.getElementById('my-tag-mini').textContent = '@' + (currentProfile.username || 'user');
     const av = document.getElementById('my-avatar-mini');
     av.src = currentProfile.avatar || generateAvatar(currentProfile.username || 'U');
@@ -597,48 +581,33 @@
   // ==================== ЧАТЫ ====================
   async function initChats() {
     if (!currentUser) return;
-
-    // Стандартные чаты: general, voice, zywoo
     const defaults = [
       { id: 'general', name: 'Общий чат', type: 'general', icon: '🌐' },
       { id: 'voice', name: 'Голосовой чат', type: 'voice', icon: '🎙' },
       { id: 'zywoo', name: 'Чат с ZywOo', type: 'zywoo', icon: '🎯' }
     ];
 
-    // Убедимся, что они есть в БД (создаём, если нет — только для отображения)
     for (const d of defaults) {
       const r = ref(db, `chats/${d.id}`);
       const s = await get(r);
       if (!s.exists()) {
-        await set(r, {
-          name: d.name,
-          type: d.type,
-          icon: d.icon,
-          members: {},
-          createdAt: serverTimestamp()
-        });
+        await set(r, { name: d.name, type: d.type, icon: d.icon, members: {}, createdAt: serverTimestamp() });
       }
     }
 
-    // Подписываемся на список чатов, где состоит пользователь + стандартные
-    const chatsRef = ref(db, 'chats');
     if (chatsUnsubscribe) chatsUnsubscribe();
-
-    chatsUnsubscribe = onValue(chatsRef, (snap) => {
+    chatsUnsubscribe = onValue(ref(db, 'chats'), (snap) => {
       const all = snap.val() || {};
       const listEl = document.getElementById('chat-list');
       listEl.innerHTML = '';
-
       const visible = [];
+
       for (const [id, chat] of Object.entries(all)) {
-        // Показываем стандартные всегда, остальные — если пользователь в members
-        if (['general', 'voice', 'zywoo'].includes(id) ||
-            (chat.members && chat.members[currentUser.uid])) {
+        if (['general', 'voice', 'zywoo'].includes(id) || (chat.members && chat.members[currentUser.uid])) {
           visible.push({ id, ...chat });
         }
       }
 
-      // Сортируем: сначала стандартные, потом по имени
       visible.sort((a, b) => {
         const order = { general: 0, voice: 1, zywoo: 2 };
         return (order[a.id] ?? 99) - (order[b.id] ?? 99) || (a.name || '').localeCompare(b.name || '');
@@ -648,7 +617,6 @@
         const el = document.createElement('div');
         el.className = 'chat-item' + (chat.id === currentChatId ? ' active' : '');
         el.dataset.chatId = chat.id;
-
         const icon = chat.icon || (chat.type === 'dm' ? '👤' : '👥');
         el.innerHTML = `
           <div class="chat-icon">${icon}</div>
@@ -660,16 +628,13 @@
         `;
         el.addEventListener('click', () => openChat(chat.id, chat));
         listEl.appendChild(el);
-
-        // Счётчик сообщений
         updateMsgCount(chat.id);
       }
     });
   }
 
   function updateMsgCount(chatId) {
-    const countRef = ref(db, `chats/${chatId}/messages`);
-    get(countRef).then(snap => {
+    get(ref(db, `chats/${chatId}/messages`)).then(snap => {
       const count = snap.exists() ? Object.keys(snap.val()).length : 0;
       const badge = document.getElementById(`badge-${chatId}`);
       if (badge) {
@@ -682,26 +647,23 @@
   // ==================== ОТКРЫТИЕ ЧАТА ====================
   function openChat(chatId, chatData) {
     currentChatId = chatId;
-
-    // Подсветка
     document.querySelectorAll('.chat-item').forEach(el => {
       el.classList.toggle('active', el.dataset.chatId === chatId);
     });
 
     document.getElementById('chat-title').textContent = chatData.name || 'Чат';
 
-    // Очищаем предыдущие подписки
     if (messagesUnsubscribe) { messagesUnsubscribe(); messagesUnsubscribe = null; }
     if (msgCountUnsubscribe) { msgCountUnsubscribe(); msgCountUnsubscribe = null; }
 
     const isVoice = chatData.type === 'voice';
     const isZywoo = chatData.type === 'zywoo';
 
-    // Показываем/скрываем панели
     document.getElementById('messages').classList.toggle('hidden', isVoice);
     document.getElementById('msg-input-area').classList.toggle('hidden', isVoice);
     document.getElementById('voice-panel').classList.toggle('hidden', !isVoice);
-        // Включаем или выключаем поле ввода в зависимости от типа чата
+
+    // ФИКС: Включаем/выключаем поле ввода
     if (isVoice) {
       document.getElementById('msg-input').disabled = true;
       document.getElementById('btn-send').disabled = true;
@@ -711,15 +673,10 @@
     }
 
     if (isVoice) {
-      // Обновляем счётчик для голосового (не сообщения, а участники)
       document.getElementById('chat-msg-count').textContent = 'Голосовой канал';
-      // Настраиваем голосовую панель
       setupVoicePanel(chatId);
     } else {
-      // Подписываемся на сообщения
       subscribeMessages(chatId);
-
-      // Счётчик сообщений
       msgCountUnsubscribe = onValue(ref(db, `chats/${chatId}/messages`), (snap) => {
         const count = snap.exists() ? Object.keys(snap.val()).length : 0;
         document.getElementById('chat-msg-count').textContent = `${count} сообщений`;
@@ -727,7 +684,6 @@
       });
     }
 
-    // Кнопки в заголовке
     const actions = document.getElementById('header-actions');
     actions.innerHTML = '';
 
@@ -739,11 +695,6 @@
     }
 
     if (isZywoo) {
-      // Никаких особых действий
-    }
-
-    // Для чата с ZywOo — добавляем приветствие если пусто
-    if (isZywoo) {
       checkZywooGreeting(chatId);
     }
   }
@@ -752,8 +703,7 @@
   function subscribeMessages(chatId) {
     const msgContainer = document.getElementById('messages');
     msgContainer.innerHTML = '';
-    const msgsRef = ref(db, `chats/${chatId}/messages`);
-    const q = query(msgsRef, orderByChild('timestamp'), limitToLast(100));
+    const q = query(ref(db, `chats/${chatId}/messages`), orderByChild('timestamp'), limitToLast(100));
 
     messagesUnsubscribe = onValue(q, (snap) => {
       msgContainer.innerHTML = '';
@@ -765,9 +715,7 @@
       snap.forEach(child => { msgs.push({ id: child.key, ...child.val() }); });
       msgs.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
 
-      for (const m of msgs) {
-        renderMessage(m, msgContainer);
-      }
+      for (const m of msgs) renderMessage(m, msgContainer);
       msgContainer.scrollTop = msgContainer.scrollHeight;
     });
   }
@@ -776,7 +724,6 @@
     const isOwn = m.uid === currentUser.uid;
     const el = document.createElement('div');
     el.className = 'msg' + (isOwn ? ' own' : '');
-
     const avatar = m.avatar || generateAvatar(m.username || 'U');
     const time = m.timestamp ? new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
 
@@ -791,7 +738,6 @@
     container.appendChild(el);
   }
 
-  // Отправка сообщения
   document.getElementById('btn-send').addEventListener('click', sendMessage);
   document.getElementById('msg-input').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') sendMessage();
@@ -802,8 +748,24 @@
     const input = document.getElementById('msg-input');
     const text = input.value.trim();
     if (!text) return;
-    input.value = '';
 
+    // --- ЗАЩИТА ZYWOO ОТ СПАМА ---
+    if (currentChatId === 'zywoo') {
+      if (text.length < 3) {
+        alert('ZywOo не понимает сообщения короче 3 символов.');
+        return;
+      }
+      if (isZywOoThinking) {
+        alert('Подожди, ZywOo еще печатает...');
+        return;
+      }
+      isZywOoThinking = true;
+      input.disabled = true; // Блокируем ввод, пока ждем ответ
+      document.getElementById('btn-send').disabled = true;
+    }
+    // -----------------------------
+
+    input.value = '';
     const chatRef = ref(db, `chats/${currentChatId}/messages`);
     const newRef = push(chatRef);
     await set(newRef, {
@@ -814,22 +776,18 @@
       timestamp: Date.now()
     });
 
-    // Если это чат с ZywOo — генерируем ответ
     if (currentChatId === 'zywoo') {
-      setTimeout(() => replyZywoo(text), 800 + Math.random() * 1200);
+      replyZywoo(text);
     }
   }
 
-  // ==================== ЧАТ С ZYWOO ====================
+  // ==================== ЧАТ С ZYWOO (ИИ) ====================
   async function checkZywooGreeting(chatId) {
-    const msgsRef = ref(db, `chats/${chatId}/messages`);
-    const snap = await get(msgsRef);
+    const snap = await get(ref(db, `chats/${chatId}/messages`));
     if (!snap.exists() || Object.keys(snap.val()).length === 0) {
-      // Отправляем приветствие от ZywOo
-      const newRef = push(msgsRef);
+      const newRef = push(ref(db, `chats/${chatId}/messages`));
       await set(newRef, {
-        uid: 'zywoo_bot',
-        username: 'ZywOo',
+        uid: 'zywoo_bot', username: 'ZywOo',
         avatar: 'https://i.imgur.com/8Q6Z4kL.png',
         text: 'Привет! Я ZywOo. Спрашивай что угодно по CS или просто поболтаем.',
         timestamp: Date.now()
@@ -837,84 +795,52 @@
     }
   }
 
-  function replyZywoo(userText) {
+  async function replyZywoo(userText) {
     if (!currentChatId || currentChatId !== 'zywoo') return;
-    const msgsRef = ref(db, `chats/zywoo/messages`);
-    const newRef = push(msgsRef);
-    const response = generateZywooResponse(userText);
-    set(newRef, {
-      uid: 'zywoo_bot',
-      username: 'ZywOo',
-      avatar: 'https://i.imgur.com/8Q6Z4kL.png',
-      text: response,
-      timestamp: Date.now()
-    });
-  }
+    
+    try {
+      // Запрос к твоему Cloudflare Worker
+      const res = await fetch('https://zywoo.nestlecreator.workers.dev', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userText: userText })
+      });
 
-  function generateZywooResponse(input) {
-    const t = input.toLowerCase();
-    // Простая, но осмысленная генерация
-    if (/привет|здравств|хай|hello|hi/i.test(t)) {
-      const greetings = [
-        'Привет! Как дела на карте?',
-        'Салют! Готов обсудить CS или что-то ещё.',
-        'Хэй! Что нового?'
-      ];
-      return greetings[Math.floor(Math.random() * greetings.length)];
+      if (!res.ok) throw new Error('Ошибка сервера: ' + res.status);
+      const data = await res.json();
+      
+      if (data.reply) {
+        const newRef = push(ref(db, `chats/zywoo/messages`));
+        await set(newRef, {
+          uid: 'zywoo_bot', username: 'ZywOo',
+          avatar: 'https://i.imgur.com/8Q6Z4kL.png',
+          text: data.reply,
+          timestamp: Date.now()
+        });
+      }
+    } catch (e) {
+      console.error('Ошибка ZywOo:', e);
+      const newRef = push(ref(db, `chats/zywoo/messages`));
+      await set(newRef, {
+        uid: 'zywoo_bot', username: 'ZywOo (Ошибка)',
+        avatar: '', text: 'Ошибка связи с ИИ: ' + e.message,
+        timestamp: Date.now()
+      });
+    } finally {
+      // Разблокируем ввод в любом случае (успех или ошибка)
+      isZywOoThinking = false;
+      if (currentChatId === 'zywoo') {
+        document.getElementById('msg-input').disabled = false;
+        document.getElementById('btn-send').disabled = false;
+      }
     }
-    if (/как дела|как ты|how are you/i.test(t)) {
-      return 'Всё отлично, тренируюсь каждый день. А у тебя как?';
-    }
-    if (/cs|кс|контра|csgo|counter.?strike/i.test(t)) {
-      const csReplies = [
-        'CS — это жизнь. Что конкретно интересует? Тактики, прицел, позиции?',
-        'В CS главное — играть головой, а не только руками. Спрашивай.',
-        'Люблю Mirage и Inferno. А ты на какой карте любишь играть?'
-      ];
-      return csReplies[Math.floor(Math.random() * csReplies.length)];
-    }
-    if (/awp|снайпер|sniper/i.test(t)) {
-      return 'AWP — моё второе имя. Главное — не торопиться и читать игру.';
-    }
-    if (/mirage|inferno|dust|nuke|overpass|ancient|anubis|vertigo|train/i.test(t)) {
-      return 'Хорошая карта. На ней важно контролировать ключевые позиции и работать с тиммейтами.';
-    }
-    if (/тим|команд|team|игрок/i.test(t)) {
-      return 'В команде важнее всего коммуникация и доверие. Без этого даже лучший игрок не вытянет.';
-    }
-    if (/совет|помог|как стать|improve|трениров/i.test(t)) {
-      return 'Больше играй, смотри демки, анализируй свои ошибки. И не забывай про аим.';
-    }
-    if (/любл|нрав|favorite|лучш/i.test(t)) {
-      return 'Мне нравится играть против сильных соперников — это мотивирует расти.';
-    }
-    if (/\?/.test(t)) {
-      const qReplies = [
-        'Хороший вопрос. Дай подумать... Думаю, всё зависит от ситуации.',
-        'Если честно, я больше практик, чем теоретик. Но могу сказать — пробуй разные подходы.',
-        'Не уверен, что у меня есть однозначный ответ, но я бы попробовал разобраться в деталях.'
-      ];
-      return qReplies[Math.floor(Math.random() * qReplies.length)];
-    }
-    // Fallback
-    const fallbacks = [
-      'Понял тебя. Расскажи подробнее?',
-      'Интересно. А что ты сам думаешь по этому поводу?',
-      'Хм, я бы сказал, что всё индивидуально. Но звучит любопытно.',
-      'Согласен. Кстати, давно играл в CS?'
-    ];
-    return fallbacks[Math.floor(Math.random() * fallbacks.length)];
   }
 
   // ==================== ДОБАВЛЕНИЕ ЧАТА ====================
-  document.getElementById('btn-add-chat').addEventListener('click', () => {
-    openModal('modal-add-chat');
-  });
-
+  document.getElementById('btn-add-chat').addEventListener('click', () => openModal('modal-add-chat'));
   document.getElementById('new-chat-type').addEventListener('change', (e) => {
     const isDm = e.target.value === 'dm';
     document.getElementById('label-chat-name').textContent = isDm ? 'Название (необязательно)' : 'Название группы';
-    document.getElementById('new-chat-name').placeholder = isDm ? 'Оставьте пустым для авто' : 'Название...';
   });
 
   document.getElementById('btn-create-chat').addEventListener('click', async () => {
@@ -924,25 +850,20 @@
     if (!currentUser) return;
 
     const emails = emailsStr.split(',').map(e => e.trim()).filter(Boolean);
-
-    // Ищем пользователей по email
-    const usersRef = ref(db, 'users');
-    const usersSnap = await get(usersRef);
+    const usersSnap = await get(ref(db, 'users'));
     const allUsers = usersSnap.val() || {};
     const members = { [currentUser.uid]: true };
     let dmTargetUid = null;
-    let dmTargetName = '';
 
     for (const [uid, u] of Object.entries(allUsers)) {
       if (emails.includes(u.email) && uid !== currentUser.uid) {
         members[uid] = true;
-        if (type === 'dm') { dmTargetUid = uid; dmTargetName = u.username || u.email; }
+        if (type === 'dm') dmTargetUid = uid;
       }
     }
 
     if (type === 'dm') {
       if (!dmTargetUid) { alert('Пользователь с таким email не найден'); return; }
-      // Проверяем, есть ли уже личный чат
       const chatsSnap = await get(ref(db, 'chats'));
       const chats = chatsSnap.val() || {};
       let existingId = null;
@@ -956,47 +877,27 @@
         openChat(existingId, chats[existingId]);
         return;
       }
-      // Создаём DM
       const newRef = push(ref(db, 'chats'));
-      await set(newRef, {
-        name: name || `Личный чат`,
-        type: 'dm',
-        icon: '👤',
-        members,
-        createdAt: serverTimestamp()
-      });
+      await set(newRef, { name: name || `Личный чат`, type: 'dm', icon: '👤', members, createdAt: serverTimestamp() });
       closeModal('modal-add-chat');
       return;
     }
 
-    // Группа
     const newRef = push(ref(db, 'chats'));
-    await set(newRef, {
-      name: name || 'Новая группа',
-      type: 'group',
-      icon: '👥',
-      members,
-      createdAt: serverTimestamp()
-    });
+    await set(newRef, { name: name || 'Новая группа', type: 'group', icon: '👥', members, createdAt: serverTimestamp() });
     closeModal('modal-add-chat');
   });
 
   // ==================== НАСТРОЙКИ ====================
   document.getElementById('profile-mini').addEventListener('click', () => {
-    // Заполняем форму
     document.getElementById('settings-username').value = currentProfile.displayName || currentProfile.username || '';
     document.getElementById('settings-bio').value = currentProfile.bio || '';
-    const av = document.getElementById('settings-avatar-preview');
-    av.src = currentProfile.avatar || generateAvatar(currentProfile.username || 'U');
-    // Цвета
+    document.getElementById('settings-avatar-preview').src = currentProfile.avatar || generateAvatar(currentProfile.username || 'U');
     renderColorPresets();
     openModal('modal-settings');
   });
 
-  const COLORS = [
-    '#00ff88', '#00cc66', '#00ffaa', '#66ff66', '#00e5ff',
-    '#ff6b6b', '#ffa502', '#a29bfe', '#fd79a8', '#55efc4'
-  ];
+  const COLORS = ['#00ff88', '#00cc66', '#00ffaa', '#66ff66', '#00e5ff', '#ff6b6b', '#ffa502', '#a29bfe', '#fd79a8', '#55efc4'];
 
   function renderColorPresets() {
     const container = document.getElementById('color-presets');
@@ -1015,15 +916,13 @@
     }
   }
 
-  // Загрузка аватара (base64)
   document.getElementById('settings-avatar-file').addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
     reader.onload = (ev) => {
-      const dataUrl = ev.target.result;
-      document.getElementById('settings-avatar-preview').src = dataUrl;
-      currentProfile._tempAvatar = dataUrl;
+      document.getElementById('settings-avatar-preview').src = ev.target.result;
+      currentProfile._tempAvatar = ev.target.result;
     };
     reader.readAsDataURL(file);
   });
@@ -1058,13 +957,6 @@
     currentGroupSettingsId = chatId;
     document.getElementById('group-settings-name').value = chatData.name || '';
     document.getElementById('group-settings-desc').value = chatData.description || '';
-    // Список email участников
-    const membersEmails = [];
-    if (chatData.members) {
-      for (const uid of Object.keys(chatData.members)) {
-        // Найдём email — но для простоты оставим как есть
-      }
-    }
     document.getElementById('group-settings-members').value = '';
     openModal('modal-group-settings');
   }
@@ -1073,14 +965,12 @@
     if (!currentGroupSettingsId) return;
     const name = document.getElementById('group-settings-name').value.trim();
     const desc = document.getElementById('group-settings-desc').value.trim();
-    const newEmails = document.getElementById('group-settings-members').value
-      .split(',').map(e => e.trim()).filter(Boolean);
+    const newEmails = document.getElementById('group-settings-members').value.split(',').map(e => e.trim()).filter(Boolean);
 
     const updates = {};
     if (name) updates.name = name;
     updates.description = desc;
 
-    // Добавляем новых участников
     if (newEmails.length > 0) {
       const usersSnap = await get(ref(db, 'users'));
       const allUsers = usersSnap.val() || {};
@@ -1099,9 +989,7 @@
 
   // ==================== ГОЛОСОВОЙ ЧАТ (WebRTC) ====================
   function setupVoicePanel(chatId) {
-    // Сбрасываем предыдущее соединение
     cleanupVoice();
-
     const btnJoin = document.getElementById('btn-join-voice');
     const btnLeave = document.getElementById('btn-leave-voice');
     const btnMic = document.getElementById('btn-toggle-mic');
@@ -1122,7 +1010,6 @@
 
     btnJoin.onclick = async () => {
       try {
-        // Получаем микрофон
         localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
         voiceJoined = true;
         isMicMuted = false;
@@ -1135,37 +1022,26 @@
         btnShare.style.display = '';
         status.textContent = 'Вы в голосовом чате';
 
-        // Создаём PeerConnection
         createPeerConnection(chatId);
-
-        // Сигнализация через Firebase
         voiceRoomRef = ref(db, `voiceRooms/${chatId}`);
-        // Отправляем offer
+        
         const offer = await peerConnection.createOffer();
         await peerConnection.setLocalDescription(offer);
-        await set(ref(db, `voiceRooms/${chatId}/offer`), {
-          type: offer.type,
-          sdp: offer.sdp,
-          from: currentUser.uid
-        });
-        // Слушаем answer
+        await set(ref(db, `voiceRooms/${chatId}/offer`), { type: offer.type, sdp: offer.sdp, from: currentUser.uid });
+        
         onValue(ref(db, `voiceRooms/${chatId}/answer`), async (snap) => {
           if (snap.exists() && !peerConnection.remoteDescription) {
-            const ans = snap.val();
-            await peerConnection.setRemoteDescription(new RTCSessionDescription(ans));
+            await peerConnection.setRemoteDescription(new RTCSessionDescription(snap.val()));
           }
         });
-        // Слушаем ICE candidates
+        
         onValue(ref(db, `voiceRooms/${chatId}/iceCandidates`), (snap) => {
           snap.forEach(child => {
             const c = child.val();
-            if (c.from !== currentUser.uid) {
-              peerConnection.addIceCandidate(new RTCIceCandidate(c.candidate)).catch(() => {});
-            }
+            if (c.from !== currentUser.uid) peerConnection.addIceCandidate(new RTCIceCandidate(c.candidate)).catch(() => {});
           });
         });
 
-        // Собираем свои ICE
         peerConnection.onicecandidate = (e) => {
           if (e.candidate) {
             const cRef = push(ref(db, `voiceRooms/${chatId}/iceCandidates`));
@@ -1173,11 +1049,7 @@
           }
         };
 
-        // Обработка входящего потока (для собеседника)
-        peerConnection.ontrack = (e) => {
-          status.textContent = 'Собеседник подключён';
-        };
-
+        peerConnection.ontrack = () => { status.textContent = 'Собеседник подключён'; };
       } catch (err) {
         status.textContent = 'Ошибка: ' + err.message;
       }
@@ -1205,7 +1077,6 @@
 
     btnDeafen.onclick = () => {
       isDeafened = !isDeafened;
-      // "Наушники" — отключаем приём аудио
       if (peerConnection) {
         peerConnection.getReceivers().forEach(r => {
           if (r.track && r.track.kind === 'audio') r.track.enabled = !isDeafened;
@@ -1221,24 +1092,16 @@
         localVideo.style.display = '';
         localVideo.srcObject = screenStream;
 
-        // Добавляем видео-трек в PeerConnection
         if (peerConnection) {
           const videoTrack = screenStream.getVideoTracks()[0];
           const sender = peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
-          if (sender) {
-            await sender.replaceTrack(videoTrack);
-          } else {
-            peerConnection.addTrack(videoTrack, screenStream);
-          }
+          if (sender) await sender.replaceTrack(videoTrack);
+          else peerConnection.addTrack(videoTrack, screenStream);
         }
 
         btnShare.style.display = 'none';
         btnStopShare.style.display = '';
-
-        // Если пользователь остановил через браузер
-        screenStream.getVideoTracks()[0].onended = () => {
-          stopScreenShare();
-        };
+        screenStream.getVideoTracks()[0].onended = () => stopScreenShare();
       } catch (err) {
         status.textContent = 'Не удалось начать демонстрацию: ' + err.message;
       }
@@ -1255,29 +1118,20 @@
       localVideo.style.display = 'none';
       btnShare.style.display = '';
       btnStopShare.style.display = 'none';
-      // Убираем видео-трек из PeerConnection
       if (peerConnection) {
         peerConnection.getSenders().forEach(s => {
-          if (s.track && s.track.kind === 'video') {
-            peerConnection.removeTrack(s);
-          }
+          if (s.track && s.track.kind === 'video') peerConnection.removeTrack(s);
         });
       }
     }
 
-    // Горячие клавиши
     document.addEventListener('keydown', handleVoiceHotkeys);
   }
 
   function createPeerConnection(chatId) {
     if (peerConnection) peerConnection.close();
-    peerConnection = new RTCPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-    });
-    // Добавляем локальные треки
-    if (localStream) {
-      localStream.getTracks().forEach(t => peerConnection.addTrack(t, localStream));
-    }
+    peerConnection = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+    if (localStream) localStream.getTracks().forEach(t => peerConnection.addTrack(t, localStream));
   }
 
   function handleVoiceHotkeys(e) {
@@ -1292,7 +1146,6 @@
       const btnDeafen = document.getElementById('btn-toggle-deafen');
       const btnMic = document.getElementById('btn-toggle-mic');
       if (btnDeafen && btnMic) {
-        // PgDn = мут наушников + микрофон
         if (!isDeafened) btnDeafen.click();
         if (!isMicMuted) btnMic.click();
       }
@@ -1301,38 +1154,24 @@
 
   function cleanupVoice() {
     document.removeEventListener('keydown', handleVoiceHotkeys);
-    if (localStream) {
-      localStream.getTracks().forEach(t => t.stop());
-      localStream = null;
-    }
-    if (screenStream) {
-      screenStream.getTracks().forEach(t => t.stop());
-      screenStream = null;
-    }
-    if (peerConnection) {
-      peerConnection.close();
-      peerConnection = null;
-    }
+    if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
+    if (screenStream) { screenStream.getTracks().forEach(t => t.stop()); screenStream = null; }
+    if (peerConnection) { peerConnection.close(); peerConnection = null; }
     if (voiceSignalingUnsub) { voiceSignalingUnsub(); voiceSignalingUnsub = null; }
-    if (voiceRoomRef && currentUser) {
-      // Очищаем сигнализацию
-      set(voiceRoomRef, null).catch(() => {});
-    }
+    if (voiceRoomRef && currentUser) { set(voiceRoomRef, null).catch(() => {}); }
     voiceJoined = false;
   }
 
-  // ==================== МОДАЛКИ ====================
+  // ==================== УТИЛИТЫ ====================
   window.openModal = (id) => document.getElementById(id).classList.add('open');
   window.closeModal = (id) => document.getElementById(id).classList.remove('open');
 
-  // Закрытие по клику на фон
   document.querySelectorAll('.modal-overlay').forEach(overlay => {
     overlay.addEventListener('click', (e) => {
       if (e.target === overlay) overlay.classList.remove('open');
     });
   });
 
-  // ==================== УТИЛИТЫ ====================
   function esc(str) {
     if (!str) return '';
     const d = document.createElement('div');
@@ -1340,9 +1179,6 @@
     return d.innerHTML;
   }
 
-  // ==================== ВЫХОД ====================
-  // Добавим кнопку выхода в настройки (можно добавить куда угодно)
-  // Для простоты — по двойному клику на мини-профиль
   document.getElementById('profile-mini').addEventListener('dblclick', async () => {
     if (confirm('Выйти из аккаунта?')) {
       cleanupVoice();
