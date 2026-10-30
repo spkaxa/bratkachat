@@ -114,7 +114,6 @@
     }
     .chat-item .chat-info { flex: 1; min-width: 0; }
     .chat-item .chat-name { font-size: 0.9rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .chat-item .chat-last { font-size: 0.75rem; color: #888; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
     /* --- Основная область чата --- */
     #main {
@@ -152,7 +151,7 @@
       border: 1px solid var(--border); flex-shrink: 0; cursor: pointer;
     }
     .msg .msg-avatar:hover { border-color: #fff; }
-    .msg .msg-body { min-width: 0; }
+    .msg .msg-body { min-width: 0; position: relative; }
     .msg .msg-author { font-size: 0.75rem; color: var(--accent); font-weight: 600; margin-bottom: 2px; cursor: pointer; }
     .msg .msg-author:hover { text-decoration: underline; }
     .msg.own .msg-author { text-align: right; color: #00ff88aa; }
@@ -166,17 +165,33 @@
     .msg .msg-time { font-size: 0.65rem; color: #666; margin-top: 2px; }
     .msg.own .msg-time { text-align: right; }
 
-    /* Медиа и Стикеры в сообщениях */
+    /* Медиа и Стикеры */
     .msg-media { max-width: 100%; max-height: 300px; border-radius: 12px; display: block; cursor: pointer; }
     .msg-sticker { width: 120px; height: 120px; object-fit: contain; display: block; }
+
+    /* Реакции */
+    .reactions-container { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+    .reaction-badge {
+      background: #00ff8822; border: 1px solid var(--border); border-radius: 12px;
+      padding: 2px 8px; font-size: 0.8rem; cursor: pointer; user-select: none;
+      display: flex; align-items: center; gap: 4px;
+    }
+    .reaction-badge:hover { background: #00ff8844; }
+    .reaction-badge.active { background: #00ff8866; border-color: var(--accent); }
     
+    .add-reaction-btn {
+      display: none; background: transparent; border: 1px solid #444; color: #888;
+      border-radius: 12px; padding: 2px 8px; font-size: 0.8rem; cursor: pointer;
+    }
+    .msg:hover .add-reaction-btn { display: block; }
+    .add-reaction-btn:hover { color: var(--accent); border-color: var(--accent); }
+
     /* Чекбокс для удаления */
     .msg-checkbox {
       display: none; align-self: center; width: 20px; height: 20px; cursor: pointer;
       accent-color: #ff5555; margin: 0 5px;
     }
     .msg:hover .msg-checkbox { display: block; }
-    .msg.own:hover .msg-checkbox { display: block; }
 
     .msg-input-area {
       padding: 14px 22px; border-top: 1px solid var(--border);
@@ -330,15 +345,11 @@
       </div>
     </div>
 
-    <!-- Плавающая кнопка удаления -->
     <div id="floating-delete">Удалить выбранные</div>
 
-    <!-- Панель стикеров -->
     <div id="sticker-panel"></div>
-    <!-- Скрытый инпут для стикеров -->
     <input type="file" id="sticker-upload" accept="image/*" style="display:none">
 
-    <!-- Панель ввода -->
     <div class="msg-input-area" id="msg-input-area">
       <button class="icon-btn" id="btn-emoji" title="Стикеры">😀</button>
       <button class="icon-btn" id="btn-media" title="Прикрепить фото/видео">📎</button>
@@ -348,7 +359,6 @@
       <button class="btn-send" id="btn-send" disabled>➤</button>
     </div>
 
-    <!-- Голосовая панель -->
     <div class="voice-panel hidden" id="voice-panel">
       <div class="voice-status" id="voice-status">Голосовой чат</div>
       <div class="voice-controls">
@@ -367,7 +377,7 @@
   </div>
 </div>
 
-<!-- МОДАЛКИ (Добавить чат, Настройки) - БЕЗ ИЗМЕНЕНИЙ -->
+<!-- МОДАЛКИ -->
 <div class="modal-overlay" id="modal-add-chat">
   <div class="modal">
     <h3>Добавить чат</h3>
@@ -477,18 +487,13 @@
   
   let peerConnection = null;
   let localStream = null;
-  let screenStream = null;
-  let isMicMuted = false;
-  let isDeafened = false;
   let voiceJoined = false;
   let voiceRoomRef = null;
-  let voiceSignalingUnsub = null;
   let isZywOoThinking = false;
   
   let selectedMessages = new Set();
 
   // ==================== АВТОРИЗАЦИЯ ====================
-  // (код авторизации без изменений, я его сократил для читаемости)
   let isRegisterMode = false;
   document.getElementById('auth-toggle').addEventListener('click', () => {
     isRegisterMode = !isRegisterMode;
@@ -730,7 +735,22 @@
       contentHtml = `<div class="msg-text">${esc(m.text || '')}</div>`;
     }
 
-    // Чекбокс для своих сообщений
+    // Рендер реакций
+    let reactionsHtml = '';
+    if (m.reactions) {
+      reactionsHtml = '<div class="reactions-container">';
+      for (const [emoji, users] of Object.entries(m.reactions)) {
+        const count = Object.keys(users).length;
+        if (count > 0) {
+          const isActive = users[currentUser.uid] ? 'active' : '';
+          reactionsHtml += `<div class="reaction-badge ${isActive}" onclick="toggleReaction('${m.id}', '${emoji}')">${emoji} ${count}</div>`;
+        }
+      }
+      reactionsHtml += '</div>';
+    }
+
+    // Кнопка добавления реакции
+    const addReactionBtn = `<button class="add-reaction-btn" onclick="promptReaction('${m.id}')">😀+</button>`;
     const checkboxHtml = isOwn ? `<input type="checkbox" class="msg-checkbox" data-id="${m.id}">` : '';
 
     container.innerHTML = `
@@ -739,11 +759,14 @@
       <div class="msg-body">
         <div class="msg-author" onclick="startDM('${m.uid}', '${esc(m.username)}')">${esc(m.username || 'User')}</div>
         ${contentHtml}
-        <div class="msg-time">${time}</div>
+        <div style="display:flex; align-items:center; gap:8px; margin-top:2px;">
+          <div class="msg-time">${time}</div>
+          ${addReactionBtn}
+        </div>
+        ${reactionsHtml}
       </div>
     `;
 
-    // Обработчик чекбокса
     const cb = container.querySelector('.msg-checkbox');
     if (cb) {
       cb.checked = selectedMessages.has(m.id);
@@ -754,6 +777,26 @@
       });
     }
   }
+
+  // ==================== РЕАКЦИИ ====================
+  window.promptReaction = async (msgId) => {
+    const emoji = prompt('Введи эмодзи для реакции (например, 👍 или 🔥):');
+    if (!emoji) return;
+    await toggleReaction(msgId, emoji.trim());
+  };
+
+  window.toggleReaction = async (msgId, emoji) => {
+    const msgRef = ref(db, `chats/${currentChatId}/messages/${msgId}/reactions/${emoji}`);
+    const snap = await get(msgRef);
+    
+    if (snap.exists() && snap.val()[currentUser.uid]) {
+      // Убираем реакцию
+      await remove(ref(db, `chats/${currentChatId}/messages/${msgId}/reactions/${emoji}/${currentUser.uid}`));
+    } else {
+      // Добавляем реакцию
+      await update(ref(db, `chats/${currentChatId}/messages/${msgId}/reactions/${emoji}`), { [currentUser.uid]: true });
+    }
+  };
 
   function updateFloatingDeleteBtn() {
     const btn = document.getElementById('floating-delete');
@@ -782,7 +825,7 @@
   document.getElementById('media-upload').addEventListener('change', async (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    e.target.value = ''; // reset
+    e.target.value = '';
     await sendMessage('media', file);
   });
 
@@ -805,11 +848,16 @@
         isZywOoThinking = true;
       }
     } else if (type === 'media') {
-      const ext = file.name.split('.').pop();
-      const sRefPath = sRef(storage, `media/${Date.now()}_${currentUser.uid}.${ext}`);
-      await uploadBytes(sRefPath, file);
-      url = await getDownloadURL(sRefPath);
-      mediaType = file.type.startsWith('video') ? 'video' : 'image';
+      try {
+        const ext = file.name.split('.').pop();
+        const sRefPath = sRef(storage, `media/${Date.now()}_${currentUser.uid}.${ext}`);
+        await uploadBytes(sRefPath, file);
+        url = await getDownloadURL(sRefPath);
+        mediaType = file.type.startsWith('video') ? 'video' : 'image';
+      } catch (error) {
+        alert('Ошибка загрузки файла. Проверь правила Firebase Storage!\\n' + error.message);
+        return;
+      }
     } else if (type === 'sticker') {
       url = stickerUrl;
     }
@@ -820,7 +868,8 @@
       username: currentProfile.displayName || currentProfile.username || 'User',
       avatar: currentProfile.avatar || '',
       type: type,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      reactions: {}
     };
     if (type === 'text') msgData.text = text;
     if (type === 'media') { msgData.url = url; msgData.mediaType = mediaType; }
@@ -843,14 +892,12 @@
     const panel = document.getElementById('sticker-panel');
     panel.innerHTML = '';
     
-    // Кнопка добавления
     const addBtn = document.createElement('div');
     addBtn.className = 'add-sticker-btn';
     addBtn.textContent = '+';
     addBtn.onclick = () => document.getElementById('sticker-upload').click();
     panel.appendChild(addBtn);
 
-    // Рендер существующих
     if (currentProfile.stickers) {
       currentProfile.stickers.forEach(url => {
         const img = document.createElement('img');
@@ -870,18 +917,22 @@
     if (!file) return;
     e.target.value = '';
     
-    const ext = file.name.split('.').pop();
-    const sRefPath = sRef(storage, `stickers/${currentUser.uid}/${Date.now()}.${ext}`);
-    await uploadBytes(sRefPath, file);
-    const url = await getDownloadURL(sRefPath);
-    
-    currentProfile.stickers = currentProfile.stickers || [];
-    currentProfile.stickers.push(url);
-    await update(ref(db, `users/${currentUser.uid}`), { stickers: currentProfile.stickers });
-    renderStickers();
+    try {
+      const ext = file.name.split('.').pop();
+      const sRefPath = sRef(storage, `stickers/${currentUser.uid}/${Date.now()}.${ext}`);
+      await uploadBytes(sRefPath, file);
+      const url = await getDownloadURL(sRefPath);
+      
+      currentProfile.stickers = currentProfile.stickers || [];
+      currentProfile.stickers.push(url);
+      await update(ref(db, `users/${currentUser.uid}`), { stickers: currentProfile.stickers });
+      renderStickers();
+    } catch (error) {
+      alert('Ошибка загрузки стикера. Проверь правила Firebase Storage!\\n' + error.message);
+    }
   });
 
-  // ==================== ЛИЧКА ПО КЛИКУ ====================
+  // ==================== ЛИЧКА ====================
   window.startDM = async (targetUid, targetName) => {
     if (targetUid === currentUser.uid || targetUid === 'zywoo_bot') return;
     
@@ -901,11 +952,10 @@
       const newRef = push(ref(db, 'chats'));
       const members = { [currentUser.uid]: true, [targetUid]: true };
       await set(newRef, { name: `Личный чат`, type: 'dm', icon: '👤', members, createdAt: serverTimestamp() });
-      // initChats сам подхватит и отобразит
     }
   };
 
-  // ==================== ZYWOO AI ====================
+  // ==================== ZYWOO ====================
   async function checkZywooGreeting(chatId) {
     const snap = await get(ref(db, `chats/${chatId}/messages`));
     if (!snap.exists() || Object.keys(snap.val()).length === 0) {
@@ -913,7 +963,7 @@
       await set(newRef, {
         uid: 'zywoo_bot', username: 'ZywOo (ai)', avatar: 'https://i.imgur.com/8Q6Z4kL.png',
         type: 'text', text: 'Привет! Я ZywOo (ai). Спрашивай что угодно по CS или просто поболтаем.',
-        timestamp: Date.now()
+        timestamp: Date.now(), reactions: {}
       });
     }
   }
@@ -951,7 +1001,7 @@
         historyMessages.push({ role: 'user', content: userText });
       }
 
-      const res = await fetch('https://zywoo-v2.твой-ник.workers.dev', { // ЗАМЕНИ ССЫЛКУ!!!
+      const res = await fetch('https://zywoo-v2.твой-ник.workers.dev', { // ЗАМЕНИ ССЫЛКУ!
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages: historyMessages })
       });
@@ -965,13 +1015,13 @@
         const newRef = push(ref(db, `chats/zywoo/messages`));
         await set(newRef, {
           uid: 'zywoo_bot', username: 'ZywOo (ai)', avatar: 'https://i.imgur.com/8Q6Z4kL.png',
-          type: 'text', text: data.reply, timestamp: Date.now()
+          type: 'text', text: data.reply, timestamp: Date.now(), reactions: {}
         });
       }
     } catch (e) {
       typingEl.remove();
       const newRef = push(ref(db, `chats/zywoo/messages`));
-      await set(newRef, { uid: 'zywoo_bot', username: 'ZywOo (ai)', type: 'text', text: 'Ошибка: ' + e.message, timestamp: Date.now() });
+      await set(newRef, { uid: 'zywoo_bot', username: 'ZywOo (ai)', type: 'text', text: 'Ошибка: ' + e.message, timestamp: Date.now(), reactions: {} });
     } finally {
       isZywOoThinking = false;
       if (currentChatId === 'zywoo') {
@@ -981,81 +1031,13 @@
     }
   }
 
-  // ==================== ОСТАЛЬНОЕ (Модалки, Настройки, WebRTC) ====================
+  // ==================== ОСТАЛЬНОЕ ====================
   window.openModal = (id) => document.getElementById(id).classList.add('open');
   window.closeModal = (id) => document.getElementById(id).classList.remove('open');
   document.querySelectorAll('.modal-overlay').forEach(overlay => {
     overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.classList.remove('open'); });
   });
   function esc(str) { if (!str) return ''; const d = document.createElement('div'); d.textContent = str; return d.innerHTML; }
-
-  // WebRTC логика (без изменений)
-  function setupVoicePanel(chatId) {
-    cleanupVoice();
-    const btnJoin = document.getElementById('btn-join-voice');
-    const btnLeave = document.getElementById('btn-leave-voice');
-    const btnMic = document.getElementById('btn-toggle-mic');
-    const btnDeafen = document.getElementById('btn-toggle-deafen');
-    const status = document.getElementById('voice-status');
-
-    btnJoin.onclick = async () => {
-      try {
-        localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-        voiceJoined = true;
-        btnJoin.style.display = 'none';
-        btnLeave.style.display = '';
-        btnMic.style.display = '';
-        btnDeafen.style.display = '';
-        status.textContent = 'Вы в голосовом чате';
-
-        if (peerConnection) peerConnection.close();
-        peerConnection = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
-        localStream.getTracks().forEach(t => peerConnection.addTrack(t, localStream));
-
-        voiceRoomRef = ref(db, `voiceRooms/${chatId}`);
-        const offer = await peerConnection.createOffer();
-        await peerConnection.setLocalDescription(offer);
-        await set(ref(db, `voiceRooms/${chatId}/offer`), { type: offer.type, sdp: offer.sdp, from: currentUser.uid });
-        
-        onValue(ref(db, `voiceRooms/${chatId}/answer`), async (snap) => {
-          if (snap.exists() && !peerConnection.remoteDescription) {
-            await peerConnection.setRemoteDescription(new RTCSessionDescription(snap.val()));
-          }
-        });
-        onValue(ref(db, `voiceRooms/${chatId}/iceCandidates`), (snap) => {
-          snap.forEach(child => {
-            const c = child.val();
-            if (c.from !== currentUser.uid) peerConnection.addIceCandidate(new RTCIceCandidate(c.candidate)).catch(() => {});
-          });
-        });
-        peerConnection.onicecandidate = (e) => {
-          if (e.candidate) {
-            const cRef = push(ref(db, `voiceRooms/${chatId}/iceCandidates`));
-            set(cRef, { from: currentUser.uid, candidate: e.candidate.toJSON() });
-          }
-        };
-      } catch (err) { status.textContent = 'Ошибка: ' + err.message; }
-    };
-
-    btnLeave.onclick = () => {
-      cleanupVoice();
-      btnJoin.style.display = '';
-      btnLeave.style.display = 'none';
-      btnMic.style.display = 'none';
-      btnDeafen.style.display = 'none';
-      status.textContent = 'Вы вышли из звонка';
-    };
-    btnMic.onclick = () => { if (localStream) { localStream.getAudioTracks()[0].enabled = !localStream.getAudioTracks()[0].enabled; btnMic.classList.toggle('danger'); } };
-    btnDeafen.onclick = () => { if (peerConnection) peerConnection.getReceivers().forEach(r => { if (r.track) r.track.enabled = false; }); };
-  }
-
-  function cleanupVoice() {
-    if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
-    if (peerConnection) { peerConnection.close(); peerConnection = null; }
-    if (voiceRoomRef && currentUser) set(voiceRoomRef, null).catch(() => {});
-    voiceJoined = false;
-  }
-
 </script>
 </body>
 </html>
